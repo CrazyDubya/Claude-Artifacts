@@ -1,6 +1,8 @@
 run artifact_manager.py
+
 do some NPM and NPX stuff
-profitt
+
+profit
 
 no seriously, this needs work because there was alot of trial and error. It doesnt automate most of the setup work, you will still need to use terminal and --force some component installs. 
 
