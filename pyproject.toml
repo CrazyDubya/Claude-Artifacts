@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-artifact-manager"
+version = "0.1.0"
+authors = [
+  { name="Your Name", email="you@example.com" },
+]
+description = "A tool to manage Claude artifacts and associated JavaScript projects."
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+        "click>=8.0"
+]
+
+[project.scripts]
+    claude-artifact-manager = "claude_artifact_manager.cli:main"
+
+[tool.setuptools.package-data]
+"claude_artifact_manager" = [
+    "templates/*.js.template",
+    "templates/*.jsx.template",
+    "templates/components/ui/*.jsx",
+    "templates/components/ui/*.js",
+    "templates/index.html.template",
+    "templates/main.jsx.template",
+    "templates/index.css.template"
+]
