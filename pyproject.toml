@@ -29,7 +29,13 @@ dependencies = [
     "templates/*.jsx.template",
     "templates/components/ui/*.jsx",
     "templates/components/ui/*.js",
-    "templates/index.html.template",
-    "templates/main.jsx.template",
-    "templates/index.css.template"
+    "templates/index.html.template", # Corrected from *.html.template
+    "templates/main.jsx.template",   # Corrected from *.jsx.template (specific to main)
+    "templates/index.css.template"   # Corrected from *.css.template
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=3.0",
 ]
