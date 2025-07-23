@@ -30,12 +30,17 @@ class ArtifactManager:
     def run_command(self, command, check=True):
         """Run a shell command and handle errors."""
         try:
+            # Security fix: Split command and avoid shell=True
+            if isinstance(command, str):
+                command = command.split()
+            
             result = subprocess.run(
                 command,
                 check=check,
                 capture_output=True,
                 text=True,
-                shell=True
+                shell=False,  # Security fix: disable shell execution
+                cwd=self.root_dir  # Ensure commands run in correct directory
             )
             if result.stdout:
                 print(result.stdout)
@@ -53,18 +58,24 @@ class ArtifactManager:
         """Initialize project with necessary configuration and dependencies."""
         # Create or update package.json
         if not self.package_json.exists():
-            self.run_command("npm init -y")
+            self.run_command(["npm", "init", "-y"])
 
         # Install base dependencies
-        deps_str = " ".join(f"{k}@{v}" for k, v in self.base_dependencies.items())
-        self.run_command(f"npm install {deps_str}")
+        deps_list = [f"{k}@{v}" for k, v in self.base_dependencies.items()]
+        self.run_command(["npm", "install"] + deps_list)
 
         # Create initial project structure
         self.create_base_files()
 
         # Install dev dependencies
-        self.run_command("npm install -D tailwindcss postcss autoprefixer")
-        self.run_command("npx tailwindcss init -p")
+        self.run_command(["npm", "install", "-D", "tailwindcss", "postcss", "autoprefixer"])
+        
+        # Initialize tailwind with better error handling
+        try:
+            self.run_command(["npx", "tailwindcss", "init", "-p"])
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: Tailwind initialization failed: {e}")
+            print("You may need to initialize Tailwind manually later.")
 
     def create_base_files(self):
         """Create necessary base files for the project."""
@@ -167,8 +178,12 @@ export default App;
 
     def update_dependencies(self, required_deps):
         """Update package.json with new dependencies."""
-        with open(self.package_json, 'r') as f:
-            package_data = json.load(f)
+        try:
+            with open(self.package_json, 'r') as f:
+                package_data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Warning: Could not read package.json: {e}")
+            return
 
         current_deps = package_data.get("dependencies", {})
         new_deps = False
@@ -176,16 +191,25 @@ export default App;
         for dep in required_deps:
             if dep not in current_deps and dep not in self.base_dependencies:
                 new_deps = True
-                # Use latest version by default
-                self.run_command(f"npm install {dep}@latest")
+                try:
+                    # Use latest version by default
+                    self.run_command(["npm", "install", f"{dep}@latest"])
+                except subprocess.CalledProcessError as e:
+                    print(f"Warning: Failed to install {dep}: {e}")
+                    continue
 
         if new_deps:
-            print("New dependencies installed successfully!")
+            print("New dependencies installation completed!")
+        else:
+            print("No new dependencies needed.")
 
 
 if __name__ == "__main__":
     # Get the absolute path to the app-analyzer directory
-    app_analyzer_dir = Path("/Users/pup/reactclaude/reactClaude/app-analyzer")
+    # Security fix: Use relative path instead of hardcoded path
+    import os
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    app_analyzer_dir = Path(current_dir)
 
     # Initialize and run the artifact manager
     manager = ArtifactManager(app_analyzer_dir)

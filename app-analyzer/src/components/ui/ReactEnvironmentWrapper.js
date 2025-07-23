@@ -35,20 +35,19 @@ class ReactEnvironmentWrapper extends React.Component {
 
     // Create container for isolated React instance
     const container = document.createElement('div');
-    this.containerRef.current.innerHTML = '';
+    // Security fix: Clear container safely
+    while (this.containerRef.current.firstChild) {
+      this.containerRef.current.removeChild(this.containerRef.current.firstChild);
+    }
     this.containerRef.current.appendChild(container);
 
     try {
-      // Dynamically load required React version
-      const ReactModule = await import(
-        `https://cdn.jsdelivr.net/npm/react@${reactVersion}/umd/react.production.min.js`
-      );
-      const ReactDOMModule = await import(
-        `https://cdn.jsdelivr.net/npm/react-dom@${reactVersion}/umd/react-dom.production.min.js`
-      );
-
-      // Create new root with specific React version
-      this.root = ReactDOMModule.createRoot(container);
+      // Security fix: Use local React instead of CDN
+      // This should be handled at build time with proper version management
+      console.warn(`React version ${reactVersion} environment requested. Using local React instead for security.`);
+      
+      // Create new root with local React
+      this.root = createRoot(container);
       this.root.render(
         <Suspense fallback={<div>Loading environment...</div>}>
           <Component />
@@ -56,12 +55,11 @@ class ReactEnvironmentWrapper extends React.Component {
       );
     } catch (error) {
       console.error(`Failed to setup React ${reactVersion} environment:`, error);
-      container.innerHTML = `
-        <div class="text-red-500">
-          Failed to load React ${reactVersion} environment. 
-          Error: ${error.message}
-        </div>
-      `;
+      // Security fix: Use textContent instead of innerHTML
+      const errorDiv = document.createElement('div');
+      errorDiv.className = 'text-red-500';
+      errorDiv.textContent = `Failed to load React ${reactVersion} environment. Error: ${error.message}`;
+      container.appendChild(errorDiv);
     }
   }
 
