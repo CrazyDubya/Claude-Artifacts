@@ -5,7 +5,10 @@ from pathlib import Path
 import re
 import importlib.resources
 import sys
+import math
 
+# Constants
+ARTIFACTS_PER_PAGE = 20
 
 class ArtifactManager:
     def __init__(self, root_dir):
@@ -16,8 +19,9 @@ class ArtifactManager:
         self.package_json = self.root_dir / "package.json"
 
         # Create necessary directories
-        self.artifacts_dir.mkdir(exist_ok=True)
+        # self.ui_dir will create the root project directory because parents=True
         self.ui_dir.mkdir(parents=True, exist_ok=True)
+        self.artifacts_dir.mkdir(exist_ok=True)
         self.public_dir.mkdir(exist_ok=True)
 
         # Initialize base dependencies
@@ -31,7 +35,7 @@ class ArtifactManager:
             "@radix-ui/react-slot": "^1.0.2"
         }
 
-    def run_command(self, command, check=True, cwd=None):
+    def run_command(self, command, check=True, cwd=None, quiet=False):
         """Run a shell command and handle errors."""
         try:
             result = subprocess.run(
@@ -42,10 +46,11 @@ class ArtifactManager:
                 shell=True,
                 cwd=cwd
             )
-            if result.stdout:
-                print(result.stdout)
-            if result.stderr and "npm WARN" not in result.stderr:
-                print(result.stderr)
+            if not quiet:
+                if result.stdout:
+                    print(result.stdout)
+                if result.stderr and "npm WARN" not in result.stderr:
+                    print(result.stderr)
             return result
         except subprocess.CalledProcessError as e:
             print(f"Command failed: {e.cmd}")
@@ -82,15 +87,19 @@ class ArtifactManager:
 
         # Install base dependencies
         deps_str = " ".join(f"{k}@{v}" for k, v in self.base_dependencies.items())
-        self.run_command(f"npm install {deps_str}", cwd=self.root_dir)
+        print("Installing base dependencies...")
+        self.run_command(f"npm install {deps_str}", cwd=self.root_dir, quiet=True)
+        print("Base dependencies installed.")
 
         # Create initial project structure
         self.create_base_files()
 
         # Install dev dependencies
-        self.run_command("npm install -D tailwindcss postcss autoprefixer", cwd=self.root_dir)
-        self.run_command("npx tailwindcss init -p", cwd=self.root_dir)
-        self.run_command("npm install -D vite @vitejs/plugin-react", cwd=self.root_dir)
+        print("Installing dev dependencies...")
+        self.run_command("npm install -D tailwindcss postcss autoprefixer", cwd=self.root_dir, quiet=True)
+        self.run_command("npx tailwindcss init -p", cwd=self.root_dir, quiet=True)
+        self.run_command("npm install -D vite @vitejs/plugin-react", cwd=self.root_dir, quiet=True)
+        print("Dev dependencies installed.")
 
         # Update tailwind.config.js for JSX content scanning
         tailwind_config_path = self.root_dir / "tailwind.config.js"
@@ -188,56 +197,94 @@ export default defineConfig({
             # Non-fatal, as per previous logic
 
     def scan_artifacts(self):
-        """Scan claude_artifacts directory and update project configuration."""
+        """Scan claude_artifacts directory, update dependencies, and create paginated manifest."""
         artifacts = []
         required_dependencies = set()
 
         # Scan for artifacts
-        for file_path in self.artifacts_dir.glob("*"):
+        print(f"Scanning for artifacts in {self.artifacts_dir}...")
+        for file_path in sorted(self.artifacts_dir.glob("*")): # Sort for consistent ordering
             if file_path.is_file():
-                with open(file_path, 'r') as f:
-                    content = f.read()
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
 
-                    # Extract imports to identify dependencies
-                    import_pattern = r'import\s+.*?from\s+[\'"]([^\.][^\'\"]+)[\'"]'
-                    imports = re.findall(import_pattern, content)
-                    required_dependencies.update(imports)
+                        # Extract imports to identify dependencies
+                        import_pattern = r'import\s+.*?from\s+[\'"]([^\.][^\'\"]+)[\'"]'
+                        imports = re.findall(import_pattern, content)
+                        required_dependencies.update(imports)
 
-                    artifacts.append({
-                        "id": file_path.stem,
-                        "name": file_path.stem.replace("-", " ").title(),
-                        "path": str(file_path.relative_to(self.root_dir)),
-                        "type": "react" if file_path.suffix in [".jsx", ".tsx"] else "vanilla"
-                    })
+                        # The path for dynamic import in React needs to be relative to the component importing it (e.g., App.jsx in src)
+                        src_dir = self.root_dir / 'src'
+                        relative_path = os.path.relpath(file_path, src_dir)
+
+                        artifacts.append({
+                            "id": file_path.stem,
+                            "name": file_path.stem.replace("-", " ").title(),
+                            "path": relative_path.replace(os.sep, '/'), # Ensure forward slashes for web paths
+                            "type": "react" if file_path.suffix in [".jsx", ".tsx"] else "vanilla"
+                        })
+                except Exception as e:
+                    print(f"Could not process file {file_path}: {e}", file=sys.stderr)
+
+        print(f"Found {len(artifacts)} artifacts.")
 
         # Update package.json with new dependencies
-        self.update_dependencies(required_dependencies)
+        if required_dependencies:
+            self.update_dependencies(required_dependencies)
 
-        # Save artifacts manifest
-        manifest_path = self.public_dir / "claude_artifacts_manifest.json"
+        # Create paginated artifacts manifest
+        total_artifacts = len(artifacts)
+        total_pages = math.ceil(total_artifacts / ARTIFACTS_PER_PAGE)
+
+        # Save main manifest file
+        manifest_path = self.public_dir / "manifest.json"
         try:
             with open(manifest_path, 'w') as f:
-                json.dump(artifacts, f, indent=2)
-            print(f"Artifact manifest saved to {manifest_path}")
+                json.dump({
+                    "totalArtifacts": total_artifacts,
+                    "totalPages": total_pages,
+                    "artifactsPerPage": ARTIFACTS_PER_PAGE
+                }, f, indent=2)
+            print(f"Main manifest saved to {manifest_path}")
         except IOError as e:
-            print(f"Error saving artifact manifest: {e}", file=sys.stderr)
-            # Decide if this should be a fatal error or just a warning
+            print(f"Error saving main manifest: {e}", file=sys.stderr)
+            return [] # Return empty list on failure
 
+        # Save paginated artifact files
+        for i in range(total_pages):
+            start_index = i * ARTIFACTS_PER_PAGE
+            end_index = start_index + ARTIFACTS_PER_PAGE
+            page_artifacts = artifacts[start_index:end_index]
+
+            page_manifest_path = self.public_dir / f"artifacts-{i + 1}.json"
+            try:
+                with open(page_manifest_path, 'w') as f:
+                    json.dump(page_artifacts, f, indent=2)
+            except IOError as e:
+                print(f"Error saving artifact page {i + 1}: {e}", file=sys.stderr)
+
+        print(f"Saved {total_pages} pages of artifacts.")
         return artifacts
 
     def update_dependencies(self, required_deps):
         """Update package.json with new dependencies."""
-        with open(self.package_json, 'r') as f:
-            package_data = json.load(f)
+        try:
+            with open(self.package_json, 'r') as f:
+                package_data = json.load(f)
+        except (IOError, json.JSONDecodeError) as e:
+            print(f"Error reading {self.package_json}: {e}", file=sys.stderr)
+            return
 
         current_deps = package_data.get("dependencies", {})
-        new_deps = False
+        new_deps_to_install = []
 
         for dep in required_deps:
             if dep not in current_deps and dep not in self.base_dependencies:
-                new_deps = True
-                # Use latest version by default
-                self.run_command(f"npm install {dep}@latest", cwd=self.root_dir)
+                new_deps_to_install.append(dep)
 
-        if new_deps:
+        if new_deps_to_install:
+            deps_str = " ".join(f"{dep}@latest" for dep in new_deps_to_install)
+            print(f"Installing new dependencies: {', '.join(new_deps_to_install)}...")
+            self.run_command(f"npm install {deps_str}", cwd=self.root_dir, quiet=True)
             print("New dependencies installed successfully!")

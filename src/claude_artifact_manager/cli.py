@@ -26,18 +26,12 @@ def init(project_directory):
 @main.command()
 @click.option("--project", "project_directory", default=".", type=click.Path(exists=True, file_okay=False, dir_okay=True, readable=True, resolve_path=True), help="The project directory.", show_default=True)
 def scan(project_directory):
-    """Scans the project's claude_artifacts directory and updates dependencies."""
+    """Scans the project's claude_artifacts directory and updates the manifest."""
     project_path = Path(project_directory)
-    click.echo(f"Scanning artifacts in {project_path}...")
     try:
-        manager = ArtifactManager(project_path) # Ensures directories exist
-        artifacts = manager.scan_artifacts()
-        if artifacts:
-            click.echo(f"Found {len(artifacts)} artifacts:")
-            for artifact in artifacts:
-                click.echo(f"- {artifact['name']} ({artifact['type']}) at {artifact['path']}")
-        else:
-            click.echo("No artifacts found.")
+        manager = ArtifactManager(project_path)
+        manager.scan_artifacts()
+        click.echo("Scan complete. Manifest and artifact pages have been updated.")
     except Exception as e:
         click.echo(f"Error during scan: {e}", err=True)
 
@@ -45,28 +39,24 @@ def scan(project_directory):
 @click.argument("artifact_file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True, resolve_path=True))
 @click.option("--project", "project_directory", required=True, type=click.Path(exists=True, file_okay=False, dir_okay=True, writable=True, resolve_path=True), help="The project directory to add the artifact to.")
 def add(artifact_file, project_directory):
-    """Adds an artifact file to the project and updates dependencies."""
+    """Adds an artifact file to the project and re-scans the directory."""
     artifact_path = Path(artifact_file)
     project_path = Path(project_directory)
 
-    manager = ArtifactManager(project_path) # Initialize manager to ensure project structure exists
-    target_artifacts_dir = manager.artifacts_dir # Use the path from the manager instance
-    target_artifacts_dir.mkdir(parents=True, exist_ok=True) # Ensure claude_artifacts dir exists
-
-    destination_path = target_artifacts_dir / artifact_path.name
-
-    click.echo(f"Adding artifact '{artifact_path.name}' to project {project_path}...")
     try:
+        manager = ArtifactManager(project_path)
+        target_artifacts_dir = manager.artifacts_dir
+        target_artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        destination_path = target_artifacts_dir / artifact_path.name
+
+        click.echo(f"Adding artifact '{artifact_path.name}' to project {project_path}...")
         shutil.copy(artifact_path, destination_path)
         click.echo(f"Artifact copied to {destination_path}")
 
-        click.echo("Scanning artifacts to update dependencies...")
-        artifacts = manager.scan_artifacts() # scan_artifacts will call update_dependencies
-        if artifacts:
-            click.echo(f"Found {len(artifacts)} artifacts. Dependencies updated if necessary.")
-        else:
-            click.echo("No artifacts found after adding.")
-        click.echo("Add command finished.")
+        click.echo("Re-scanning artifacts directory...")
+        manager.scan_artifacts()
+        click.echo("Scan complete. Manifest and artifact pages have been updated.")
 
     except Exception as e:
         click.echo(f"Error adding artifact: {e}", err=True)

@@ -1,41 +1,69 @@
 import React, { useState, useEffect } from 'react';
-import { Card } from './components/ui/card'; // Assuming Card will be part of the base UI setup
+import { Card } from './components/ui/card';
+import { Button } from './components/ui/button';
 
 function App() {
-  const [artifacts, setArtifacts] = useState([]);
+  const [manifest, setManifest] = useState({ totalPages: 0, totalArtifacts: 0 });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagedArtifacts, setPagedArtifacts] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+
   const [selectedArtifact, setSelectedArtifact] = useState(null);
   const [ArtifactComponent, setArtifactComponent] = useState(null);
 
   useEffect(() => {
-    const loadArtifacts = async () => {
+    const loadManifest = async () => {
+      setIsLoading(true);
       try {
-        const response = await fetch('/claude_artifacts_manifest.json');
+        const response = await fetch('/manifest.json');
         if (!response.ok) {
-          console.error("Failed to fetch artifacts. Ensure claude_artifacts_manifest.json is in the public folder and the server is running.");
-          setArtifacts([]);
-          return;
+          throw new Error("Failed to fetch manifest.json. Run the 'scan' command.");
         }
         const data = await response.json();
-        setArtifacts(data);
+        setManifest(data);
       } catch (error) {
-        console.error("Error loading artifacts:", error);
-        setArtifacts([]);
+        console.error("Error loading manifest:", error);
+        setManifest({ totalPages: 0, totalArtifacts: 0 });
       }
     };
-    loadArtifacts();
+    loadManifest();
   }, []);
+
+  useEffect(() => {
+    if (manifest.totalPages > 0) {
+      const loadArtifactsPage = async () => {
+        setIsLoading(true);
+        try {
+          const response = await fetch(`/artifacts-${currentPage}.json`);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch artifacts for page ${currentPage}`);
+          }
+          const data = await response.json();
+          setPagedArtifacts(data);
+        } catch (error) {
+          console.error("Error loading artifacts page:", error);
+          setPagedArtifacts([]);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      loadArtifactsPage();
+    } else {
+        setIsLoading(false);
+        setPagedArtifacts([]);
+    }
+  }, [currentPage, manifest]);
 
   useEffect(() => {
     if (selectedArtifact && selectedArtifact.path) {
       const loadComponent = async () => {
         try {
-            // Corrected import path
-            const componentModule = await import(`./${selectedArtifact.path}`);
-            setArtifactComponent(() => componentModule.default);
+          // Path is relative from `src`, so we go up one level
+          const componentModule = await import(`../${selectedArtifact.path}`);
+          setArtifactComponent(() => componentModule.default);
         } catch (error) {
-            // Corrected error message
-            console.error(`Error loading artifact component from path: ./${selectedArtifact.path}`, error);
-            setArtifactComponent(() => () => <div>Error loading component. Check console.</div>);
+          console.error(`Error loading artifact component from path: ../${selectedArtifact.path}`, error);
+          setArtifactComponent(() => () => <div>Error loading component. Check console.</div>);
         }
       };
       loadComponent();
@@ -44,20 +72,64 @@ function App() {
     }
   }, [selectedArtifact]);
 
+  const handleNextPage = () => {
+    if (currentPage < manifest.totalPages) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
+
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4">Claude Artifacts Viewer</h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {(artifacts || []).map((artifact) => (
-          <Card
-            key={artifact.id}
-            className="p-4 cursor-pointer hover:shadow-lg transition-shadow"
-            onClick={() => setSelectedArtifact(artifact)}
-          >
-            <h2 className="text-xl font-semibold">{artifact.name}</h2>
-          </Card>
-        ))}
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-2xl font-bold">Claude Artifacts Viewer</h1>
+        {manifest.totalArtifacts > 0 && (
+            <div className="text-lg">Total Artifacts: {manifest.totalArtifacts}</div>
+        )}
       </div>
+
+      {isLoading ? (
+        <div className="text-center py-10">
+          <p>Loading artifacts...</p>
+        </div>
+      ) : manifest.totalPages > 0 ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {pagedArtifacts.map((artifact) => (
+              <Card
+                key={artifact.id}
+                className="p-4 cursor-pointer hover:shadow-lg transition-shadow"
+                onClick={() => setSelectedArtifact(artifact)}
+              >
+                <h2 className="text-xl font-semibold">{artifact.name}</h2>
+              </Card>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-center space-x-4 mt-6">
+            <Button onClick={handlePrevPage} disabled={currentPage <= 1}>
+              Previous
+            </Button>
+            <span>
+              Page {currentPage} of {manifest.totalPages}
+            </span>
+            <Button onClick={handleNextPage} disabled={currentPage >= manifest.totalPages}>
+              Next
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div className="text-center py-10">
+            <p>No artifacts found.</p>
+            <p className="text-sm text-gray-500 mt-2">Try adding some artifacts to the `claude_artifacts` directory and running the `scan` command.</p>
+        </div>
+      )}
+
       {selectedArtifact && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
           <div className="bg-white p-6 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
