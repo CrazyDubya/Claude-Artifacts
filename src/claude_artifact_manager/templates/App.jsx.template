@@ -1,64 +1,65 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card } from './components/ui/card';
 import { Button } from './components/ui/button';
+import { Input } from './components/ui/input';
+
+const ARTIFACTS_PER_PAGE = 20;
 
 function App() {
-  const [manifest, setManifest] = useState({ totalPages: 0, totalArtifacts: 0 });
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pagedArtifacts, setPagedArtifacts] = useState([]);
+  const [allArtifacts, setAllArtifacts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [selectedArtifact, setSelectedArtifact] = useState(null);
   const [ArtifactComponent, setArtifactComponent] = useState(null);
 
   useEffect(() => {
-    const loadManifest = async () => {
+    const loadArtifacts = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch('/manifest.json');
+        const response = await fetch('/claude_artifacts_manifest.json');
         if (!response.ok) {
-          throw new Error("Failed to fetch manifest.json. Run the 'scan' command.");
+          throw new Error("Failed to fetch manifest. Run the 'scan' command.");
         }
         const data = await response.json();
-        setManifest(data);
+        setAllArtifacts(data);
       } catch (error) {
-        console.error("Error loading manifest:", error);
-        setManifest({ totalPages: 0, totalArtifacts: 0 });
+        console.error("Error loading artifact manifest:", error);
+        setAllArtifacts([]);
+      } finally {
+        setIsLoading(false);
       }
     };
-    loadManifest();
+    loadArtifacts();
   }, []);
 
-  useEffect(() => {
-    if (manifest.totalPages > 0) {
-      const loadArtifactsPage = async () => {
-        setIsLoading(true);
-        try {
-          const response = await fetch(`/artifacts-${currentPage}.json`);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch artifacts for page ${currentPage}`);
-          }
-          const data = await response.json();
-          setPagedArtifacts(data);
-        } catch (error) {
-          console.error("Error loading artifacts page:", error);
-          setPagedArtifacts([]);
-        } finally {
-          setIsLoading(false);
-        }
-      };
-      loadArtifactsPage();
-    } else {
-        setIsLoading(false);
-        setPagedArtifacts([]);
+  const filteredArtifacts = useMemo(() => {
+    if (!searchQuery) {
+      return allArtifacts;
     }
-  }, [currentPage, manifest]);
+    return allArtifacts.filter(artifact =>
+      artifact.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [allArtifacts, searchQuery]);
+
+  const totalPages = Math.ceil(filteredArtifacts.length / ARTIFACTS_PER_PAGE);
+
+  const paginatedArtifacts = useMemo(() => {
+    const startIndex = (currentPage - 1) * ARTIFACTS_PER_PAGE;
+    const endIndex = startIndex + ARTIFACTS_PER_PAGE;
+    return filteredArtifacts.slice(startIndex, endIndex);
+  }, [filteredArtifacts, currentPage]);
+
+  useEffect(() => {
+    // Reset to page 1 whenever the filter changes
+    setCurrentPage(1);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (selectedArtifact && selectedArtifact.path) {
       const loadComponent = async () => {
         try {
-          // Path is relative from `src`, so we go up one level
           const componentModule = await import(`../${selectedArtifact.path}`);
           setArtifactComponent(() => componentModule.default);
         } catch (error) {
@@ -73,7 +74,7 @@ function App() {
   }, [selectedArtifact]);
 
   const handleNextPage = () => {
-    if (currentPage < manifest.totalPages) {
+    if (currentPage < totalPages) {
       setCurrentPage(currentPage + 1);
     }
   };
@@ -88,19 +89,24 @@ function App() {
     <div className="container mx-auto p-4">
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">Claude Artifacts Viewer</h1>
-        {manifest.totalArtifacts > 0 && (
-            <div className="text-lg">Total Artifacts: {manifest.totalArtifacts}</div>
-        )}
+        <div className="w-1/3">
+          <Input
+            type="text"
+            placeholder="Search artifacts..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
       </div>
 
       {isLoading ? (
         <div className="text-center py-10">
           <p>Loading artifacts...</p>
         </div>
-      ) : manifest.totalPages > 0 ? (
+      ) : allArtifacts.length > 0 ? (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {pagedArtifacts.map((artifact) => (
+            {paginatedArtifacts.map((artifact) => (
               <Card
                 key={artifact.id}
                 className="p-4 cursor-pointer hover:shadow-lg transition-shadow"
@@ -111,17 +117,19 @@ function App() {
             ))}
           </div>
 
-          <div className="flex items-center justify-center space-x-4 mt-6">
-            <Button onClick={handlePrevPage} disabled={currentPage <= 1}>
-              Previous
-            </Button>
-            <span>
-              Page {currentPage} of {manifest.totalPages}
-            </span>
-            <Button onClick={handleNextPage} disabled={currentPage >= manifest.totalPages}>
-              Next
-            </Button>
-          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center space-x-4 mt-6">
+              <Button onClick={handlePrevPage} disabled={currentPage <= 1}>
+                Previous
+              </Button>
+              <span>
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button onClick={handleNextPage} disabled={currentPage >= totalPages}>
+                Next
+              </Button>
+            </div>
+          )}
         </>
       ) : (
         <div className="text-center py-10">

@@ -7,13 +7,11 @@ import importlib.resources
 import sys
 import math
 
-# Constants
-ARTIFACTS_PER_PAGE = 20
-
 class ArtifactManager:
     def __init__(self, root_dir):
         self.root_dir = Path(root_dir)
         self.artifacts_dir = self.root_dir / "claude_artifacts"
+        self.cache_path = self.artifacts_dir / ".artifact_cache.json"
         self.ui_dir = self.root_dir / "src" / "components" / "ui" # For user's project structure
         self.public_dir = self.root_dir / "public"
         self.package_json = self.root_dir / "package.json"
@@ -196,76 +194,100 @@ export default defineConfig({
             print(f"Error accessing or copying UI component templates: {e}", file=sys.stderr)
             # Non-fatal, as per previous logic
 
+    def _load_cache(self):
+        if not self.cache_path.exists():
+            return {}
+        try:
+            with open(self.cache_path, 'r') as f:
+                return json.load(f)
+        except (IOError, json.JSONDecodeError):
+            return {}
+
+    def _save_cache(self, cache_data):
+        try:
+            with open(self.cache_path, 'w') as f:
+                json.dump(cache_data, f, indent=2)
+        except IOError as e:
+            print(f"Warning: Could not save cache file: {e}", file=sys.stderr)
+
     def scan_artifacts(self):
-        """Scan claude_artifacts directory, update dependencies, and create paginated manifest."""
-        artifacts = []
+        """Scan claude_artifacts directory incrementally and update project configuration."""
+        cache = self._load_cache()
+        new_cache = {}
+        final_artifacts = []
         required_dependencies = set()
 
-        # Scan for artifacts
-        print(f"Scanning for artifacts in {self.artifacts_dir}...")
-        for file_path in sorted(self.artifacts_dir.glob("*")): # Sort for consistent ordering
-            if file_path.is_file():
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
+        processed_files = 0
+        cached_files = 0
 
-                        # Extract imports to identify dependencies
-                        import_pattern = r'import\s+.*?from\s+[\'"]([^\.][^\'\"]+)[\'"]'
-                        imports = re.findall(import_pattern, content)
-                        required_dependencies.update(imports)
+        current_files = {p.name for p in self.artifacts_dir.glob("*") if p.is_file() and not p.name.startswith('.')}
 
-                        # The path for dynamic import in React needs to be relative to the component importing it (e.g., App.jsx in src)
-                        src_dir = self.root_dir / 'src'
-                        relative_path = os.path.relpath(file_path, src_dir)
+        for file_path in sorted(self.artifacts_dir.glob("*")):
+            if not file_path.is_file() or file_path.name.startswith('.'):
+                continue
 
-                        artifacts.append({
-                            "id": file_path.stem,
-                            "name": file_path.stem.replace("-", " ").title(),
-                            "path": relative_path.replace(os.sep, '/'), # Ensure forward slashes for web paths
-                            "type": "react" if file_path.suffix in [".jsx", ".tsx"] else "vanilla"
-                        })
-                except Exception as e:
-                    print(f"Could not process file {file_path}: {e}", file=sys.stderr)
+            file_id = file_path.name
+            file_stat = file_path.stat()
 
-        print(f"Found {len(artifacts)} artifacts.")
+            if file_id in cache and cache[file_id]['mtime'] == file_stat.st_mtime and cache[file_id]['size'] == file_stat.st_size:
+                # File is unchanged, use cache
+                final_artifacts.append(cache[file_id]['data'])
+                new_cache[file_id] = cache[file_id]
+                required_dependencies.update(cache[file_id].get('dependencies', []))
+                cached_files += 1
+                continue
 
-        # Update package.json with new dependencies
+            # File is new or modified, process it
+            processed_files += 1
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # Find imports like `import ... from 'module'`
+                from_imports = re.findall(r'import\s+.*?from\s+[\'"]([^\.][^\'\"]+)[\'"]', content)
+                # Find imports like `import 'module'`
+                bare_imports = re.findall(r'import\s+[\'"]([^\.][^\'\"]+)[\'"]', content)
+
+                imports = from_imports + bare_imports
+                required_dependencies.update(imports)
+
+                relative_path = file_path.relative_to(self.root_dir)
+
+                artifact_data = {
+                    "id": file_path.stem,
+                    "name": file_path.stem.replace("-", " ").title(),
+                    "path": str(relative_path).replace(os.sep, '/'),
+                    "type": "react" if file_path.suffix in [".jsx", ".tsx"] else "vanilla"
+                }
+                final_artifacts.append(artifact_data)
+
+                new_cache[file_id] = {
+                    'mtime': file_stat.st_mtime,
+                    'size': file_stat.st_size,
+                    'dependencies': imports,
+                    'data': artifact_data
+                }
+
+            except Exception as e:
+                print(f"Could not process file {file_path}: {e}", file=sys.stderr)
+
+        print(f"Scan complete. Processed {processed_files} files, used cache for {cached_files} files.")
+
+        # Update dependencies if needed
         if required_dependencies:
             self.update_dependencies(required_dependencies)
 
-        # Create paginated artifacts manifest
-        total_artifacts = len(artifacts)
-        total_pages = math.ceil(total_artifacts / ARTIFACTS_PER_PAGE)
-
-        # Save main manifest file
-        manifest_path = self.public_dir / "manifest.json"
+        # Save the single manifest file
+        manifest_path = self.public_dir / "claude_artifacts_manifest.json"
         try:
             with open(manifest_path, 'w') as f:
-                json.dump({
-                    "totalArtifacts": total_artifacts,
-                    "totalPages": total_pages,
-                    "artifactsPerPage": ARTIFACTS_PER_PAGE
-                }, f, indent=2)
-            print(f"Main manifest saved to {manifest_path}")
+                json.dump(final_artifacts, f, indent=2)
+            print(f"Artifact manifest saved to {manifest_path} ({len(final_artifacts)} artifacts)")
         except IOError as e:
-            print(f"Error saving main manifest: {e}", file=sys.stderr)
-            return [] # Return empty list on failure
+            print(f"Error saving artifact manifest: {e}", file=sys.stderr)
 
-        # Save paginated artifact files
-        for i in range(total_pages):
-            start_index = i * ARTIFACTS_PER_PAGE
-            end_index = start_index + ARTIFACTS_PER_PAGE
-            page_artifacts = artifacts[start_index:end_index]
-
-            page_manifest_path = self.public_dir / f"artifacts-{i + 1}.json"
-            try:
-                with open(page_manifest_path, 'w') as f:
-                    json.dump(page_artifacts, f, indent=2)
-            except IOError as e:
-                print(f"Error saving artifact page {i + 1}: {e}", file=sys.stderr)
-
-        print(f"Saved {total_pages} pages of artifacts.")
-        return artifacts
+        self._save_cache(new_cache)
+        return final_artifacts
 
     def update_dependencies(self, required_deps):
         """Update package.json with new dependencies."""
