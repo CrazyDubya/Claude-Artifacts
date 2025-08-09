@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Card } from './components/ui/card';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
+import { Sun, Moon, X } from 'lucide-react';
 
 const ARTIFACTS_PER_PAGE = 20;
 
@@ -9,7 +10,10 @@ function App() {
   const [allArtifacts, setAllArtifacts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTags, setSelectedTags] = useState(new Set());
   const [currentPage, setCurrentPage] = useState(1);
+  const [sortOrder, setSortOrder] = useState('name-asc');
+  const [theme, setTheme] = useState('light');
 
   const [selectedArtifact, setSelectedArtifact] = useState(null);
   const [ArtifactComponent, setArtifactComponent] = useState(null);
@@ -19,9 +23,7 @@ function App() {
       setIsLoading(true);
       try {
         const response = await fetch('/claude_artifacts_manifest.json');
-        if (!response.ok) {
-          throw new Error("Failed to fetch manifest. Run the 'scan' command.");
-        }
+        if (!response.ok) throw new Error("Failed to fetch manifest.");
         const data = await response.json();
         setAllArtifacts(data);
       } catch (error) {
@@ -34,37 +36,63 @@ function App() {
     loadArtifacts();
   }, []);
 
-  const filteredArtifacts = useMemo(() => {
-    if (!searchQuery) {
-      return allArtifacts;
-    }
-    return allArtifacts.filter(artifact =>
-      artifact.name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [allArtifacts, searchQuery]);
+  useEffect(() => {
+    const root = window.document.documentElement;
+    root.classList.remove('light', 'dark');
+    root.classList.add(theme);
+  }, [theme]);
 
-  const totalPages = Math.ceil(filteredArtifacts.length / ARTIFACTS_PER_PAGE);
+  const allTags = useMemo(() => {
+    const tags = new Set();
+    allArtifacts.forEach(artifact => {
+      artifact.tags?.forEach(tag => tags.add(tag));
+    });
+    return Array.from(tags).sort();
+  }, [allArtifacts]);
+
+  const sortedAndFilteredArtifacts = useMemo(() => {
+    let artifacts = [...allArtifacts];
+
+    if (searchQuery) {
+      artifacts = artifacts.filter(artifact =>
+        artifact.name.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
+    if (selectedTags.size > 0) {
+      artifacts = artifacts.filter(artifact =>
+        artifact.tags && Array.from(selectedTags).every(tag => artifact.tags.includes(tag))
+      );
+    }
+
+    switch (sortOrder) {
+      case 'name-asc': artifacts.sort((a, b) => a.name.localeCompare(b.name)); break;
+      case 'name-desc': artifacts.sort((a, b) => b.name.localeCompare(a.name)); break;
+      case 'date-desc': artifacts.sort((a, b) => b.mtime - a.mtime); break;
+      case 'date-asc': artifacts.sort((a, b) => a.mtime - b.mtime); break;
+    }
+    return artifacts;
+  }, [allArtifacts, searchQuery, sortOrder, selectedTags]);
+
+  const totalPages = Math.ceil(sortedAndFilteredArtifacts.length / ARTIFACTS_PER_PAGE);
 
   const paginatedArtifacts = useMemo(() => {
     const startIndex = (currentPage - 1) * ARTIFACTS_PER_PAGE;
-    const endIndex = startIndex + ARTIFACTS_PER_PAGE;
-    return filteredArtifacts.slice(startIndex, endIndex);
-  }, [filteredArtifacts, currentPage]);
+    return sortedAndFilteredArtifacts.slice(startIndex, startIndex + ARTIFACTS_PER_PAGE);
+  }, [sortedAndFilteredArtifacts, currentPage]);
 
   useEffect(() => {
-    // Reset to page 1 whenever the filter changes
     setCurrentPage(1);
-  }, [searchQuery]);
+  }, [searchQuery, sortOrder, selectedTags]);
 
   useEffect(() => {
-    if (selectedArtifact && selectedArtifact.path) {
+    if (selectedArtifact?.path) {
       const loadComponent = async () => {
         try {
           const componentModule = await import(`../${selectedArtifact.path}`);
           setArtifactComponent(() => componentModule.default);
         } catch (error) {
-          console.error(`Error loading artifact component from path: ../${selectedArtifact.path}`, error);
-          setArtifactComponent(() => () => <div>Error loading component. Check console.</div>);
+          setArtifactComponent(() => () => <div>Error loading component.</div>);
         }
       };
       loadComponent();
@@ -73,89 +101,102 @@ function App() {
     }
   }, [selectedArtifact]);
 
-  const handleNextPage = () => {
-    if (currentPage < totalPages) {
-      setCurrentPage(currentPage + 1);
-    }
-  };
-
-  const handlePrevPage = () => {
-    if (currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-    }
+  const toggleTag = (tag) => {
+    setSelectedTags(prev => {
+      const newTags = new Set(prev);
+      if (newTags.has(tag)) {
+        newTags.delete(tag);
+      } else {
+        newTags.add(tag);
+      }
+      return newTags;
+    });
   };
 
   return (
-    <div className="container mx-auto p-4">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Claude Artifacts Viewer</h1>
-        <div className="w-1/3">
-          <Input
-            type="text"
-            placeholder="Search artifacts..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-      </div>
+    <div className="bg-white dark:bg-gray-900 text-black dark:text-white min-h-screen">
+      <div className="container mx-auto p-4">
+        <header className="flex justify-between items-center mb-4 gap-4">
+          <h1 className="text-2xl font-bold">Claude Artifacts Viewer</h1>
+          <div className="flex-grow max-w-md">
+            <Input type="text" placeholder="Search artifacts..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="dark:bg-gray-800 dark:text-white" />
+          </div>
+          <div className="flex items-center gap-2">
+            <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} className="p-2 rounded border dark:bg-gray-800 dark:border-gray-600">
+              <option value="name-asc">Sort by Name (A-Z)</option>
+              <option value="name-desc">Sort by Name (Z-A)</option>
+              <option value="date-desc">Sort by Date (Newest)</option>
+              <option value="date-asc">Sort by Date (Oldest)</option>
+            </select>
+            <Button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')} size="icon" variant="outline" className="dark:text-white dark:border-gray-600">
+              <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+              <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+            </Button>
+          </div>
+        </header>
 
-      {isLoading ? (
-        <div className="text-center py-10">
-          <p>Loading artifacts...</p>
-        </div>
-      ) : allArtifacts.length > 0 ? (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {paginatedArtifacts.map((artifact) => (
-              <Card
-                key={artifact.id}
-                className="p-4 cursor-pointer hover:shadow-lg transition-shadow"
-                onClick={() => setSelectedArtifact(artifact)}
-              >
-                <h2 className="text-xl font-semibold">{artifact.name}</h2>
-              </Card>
+        {allTags.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-4 items-center">
+            <span className="font-semibold">Filter by tags:</span>
+            {allTags.map(tag => (
+              <Button key={tag} onClick={() => toggleTag(tag)} variant={selectedTags.has(tag) ? 'default' : 'outline'} className="h-8 px-3">
+                {tag}
+              </Button>
             ))}
-          </div>
-
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center space-x-4 mt-6">
-              <Button onClick={handlePrevPage} disabled={currentPage <= 1}>
-                Previous
+            {selectedTags.size > 0 && (
+              <Button onClick={() => setSelectedTags(new Set())} variant="ghost" size="icon" className="h-8 w-8">
+                <X className="h-4 w-4" />
               </Button>
-              <span>
-                Page {currentPage} of {totalPages}
-              </span>
-              <Button onClick={handleNextPage} disabled={currentPage >= totalPages}>
-                Next
-              </Button>
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="text-center py-10">
-            <p>No artifacts found.</p>
-            <p className="text-sm text-gray-500 mt-2">Try adding some artifacts to the `claude_artifacts` directory and running the `scan` command.</p>
-        </div>
-      )}
+            )}
+          </div>
+        )}
 
-      {selectedArtifact && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className="bg-white p-6 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-bold">{selectedArtifact.name}</h2>
-              <button
-                className="text-gray-500 hover:text-gray-700 text-2xl"
-                onClick={() => setSelectedArtifact(null)}
-              >
-                &times;
-              </button>
+        {isLoading ? (
+          <div className="text-center py-10">Loading artifacts...</div>
+        ) : sortedAndFilteredArtifacts.length > 0 ? (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {paginatedArtifacts.map((artifact) => (
+                <Card key={artifact.id} className="p-4 cursor-pointer hover:shadow-lg transition-shadow dark:bg-gray-800 flex flex-col justify-between" onClick={() => setSelectedArtifact(artifact)}>
+                  <h2 className="text-xl font-semibold mb-2">{artifact.name}</h2>
+                  {artifact.tags?.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {artifact.tags.map(tag => <div key={tag} className="text-xs bg-gray-200 dark:bg-gray-700 rounded-full px-2 py-1">{tag}</div>)}
+                    </div>
+                  )}
+                </Card>
+              ))}
             </div>
-            <div id="artifact-component-container">
-              {ArtifactComponent ? <ArtifactComponent /> : <p>Loading component...</p>}
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center space-x-4 mt-6">
+                <Button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1}>Previous</Button>
+                <span>Page {currentPage} of {totalPages}</span>
+                <Button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>Next</Button>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="text-center py-10">
+            <p>No artifacts found matching your criteria.</p>
+            <p className="text-sm text-gray-500 mt-2">Try clearing your search or tag filters.</p>
+          </div>
+        )}
+
+        {selectedArtifact && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white dark:bg-gray-900 p-6 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-2xl font-bold">{selectedArtifact.name}</h2>
+                <button className="text-gray-500 hover:text-gray-700 text-2xl" onClick={() => setSelectedArtifact(null)}>&times;</button>
+              </div>
+              <div id="artifact-component-container">
+                {ArtifactComponent ? <ArtifactComponent /> : <p>Loading...</p>}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

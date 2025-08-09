@@ -136,6 +136,8 @@ class TestArtifactManager:
         with open(manifest_path, 'r') as f:
             manifest_data = json.load(f)
             assert len(manifest_data) == 3
+            # Check that mtime was added
+            assert "mtime" in manifest_data[0]
 
     def test_update_dependencies_installs_new_deps_batched(self, temp_project_dir, mock_npm_install):
         project_path = temp_project_dir

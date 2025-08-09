@@ -6,6 +6,7 @@ import re
 import importlib.resources
 import sys
 import math
+import pyjsparser
 
 class ArtifactManager:
     def __init__(self, root_dir):
@@ -99,19 +100,26 @@ class ArtifactManager:
         self.run_command("npm install -D vite @vitejs/plugin-react", cwd=self.root_dir, quiet=True)
         print("Dev dependencies installed.")
 
-        # Update tailwind.config.js for JSX content scanning
+        # Update tailwind.config.js for JSX content scanning and dark mode
         tailwind_config_path = self.root_dir / "tailwind.config.js"
         if tailwind_config_path.exists():
-            # This is a simplified way; a more robust way would be to parse the JS AST
-            # or use a regex, but that's much more complex.
-            # For now, assume a simple structure of tailwind.config.js
             config_content = tailwind_config_path.read_text()
-            # Replace content: [] with the new content line
+
+            # Add darkMode: "class"
+            config_content = re.sub(
+                r'module.exports = {',
+                'module.exports = {\n  darkMode: "class",',
+                config_content,
+                count=1
+            )
+
+            # Add content scanning paths
             new_content_line = '  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],'
-            config_content = re.sub(r'content:\s*\[\s*\]', new_content_line, config_content, count=1)
-            # If content was not empty, try a more generic replacement (less safe)
-            if 'content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"]' not in config_content:
+            if 'content: []' in config_content:
+                config_content = config_content.replace('content: []', new_content_line)
+            else:
                  config_content = re.sub(r'content:\s*\[.*?\]', new_content_line, config_content, count=1)
+
             tailwind_config_path.write_text(config_content)
         else:
             print(f"Warning: {tailwind_config_path} not found. Could not update content scanning paths.", file=sys.stderr)
@@ -243,13 +251,27 @@ export default defineConfig({
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
 
-                # Find imports like `import ... from 'module'`
-                from_imports = re.findall(r'import\s+.*?from\s+[\'"]([^\.][^\'\"]+)[\'"]', content)
-                # Find imports like `import 'module'`
-                bare_imports = re.findall(r'import\s+[\'"]([^\.][^\'\"]+)[\'"]', content)
+                imports = []
+                try:
+                    # Use AST parsing for accuracy
+                    tree = pyjsparser.parse(content)
+                    for node in tree.get('body', []):
+                        if node.get('type') == 'ImportDeclaration':
+                            source = node.get('source', {}).get('value')
+                            # Filter out relative paths
+                            if source and not source.startswith('.'):
+                                imports.append(source)
+                except Exception:
+                    # Fallback to regex if AST parsing fails (e.g., due to JSX)
+                    from_imports = re.findall(r'import\s+.*?from\s+[\'"]([^\.][^\'\"]+)[\'"]', content)
+                    bare_imports = re.findall(r'import\s+[\'"]([^\.][^\'\"]+)[\'"]', content)
+                    imports = from_imports + bare_imports
 
-                imports = from_imports + bare_imports
                 required_dependencies.update(imports)
+
+                # Extract tags from comments
+                tags_match = re.search(r'\/\*\s*@tags:\s*(.*?)\s*\*\/', content)
+                tags = [tag.strip() for tag in tags_match.group(1).split(',')] if tags_match else []
 
                 relative_path = file_path.relative_to(self.root_dir)
 
@@ -257,7 +279,9 @@ export default defineConfig({
                     "id": file_path.stem,
                     "name": file_path.stem.replace("-", " ").title(),
                     "path": str(relative_path).replace(os.sep, '/'),
-                    "type": "react" if file_path.suffix in [".jsx", ".tsx"] else "vanilla"
+                    "type": "react" if file_path.suffix in [".jsx", ".tsx"] else "vanilla",
+                    "mtime": file_stat.st_mtime,
+                    "tags": tags
                 }
                 final_artifacts.append(artifact_data)
 
