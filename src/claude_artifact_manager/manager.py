@@ -89,7 +89,9 @@ class ArtifactManager:
 
         # Install dev dependencies
         self.run_command("npm install -D tailwindcss postcss autoprefixer", cwd=self.root_dir)
-        self.run_command("npx tailwindcss init -p", cwd=self.root_dir)
+        # Workaround for environments where npx/npm exec fail to find the binary
+        tailwindcss_cli_path = os.path.join(".", "node_modules", "tailwindcss", "lib", "cli.js")
+        self.run_command(f"node {tailwindcss_cli_path} init -p", cwd=self.root_dir)
         self.run_command("npm install -D vite @vitejs/plugin-react", cwd=self.root_dir)
 
         # Update tailwind.config.js for JSX content scanning
@@ -203,10 +205,15 @@ export default defineConfig({
                     imports = re.findall(import_pattern, content)
                     required_dependencies.update(imports)
 
+                    src_dir = self.root_dir / "src"
+                    relative_path = os.path.relpath(file_path, src_dir)
+                    # Ensure forward slashes for web paths
+                    relative_path = relative_path.replace(os.path.sep, '/')
+
                     artifacts.append({
                         "id": file_path.stem,
                         "name": file_path.stem.replace("-", " ").title(),
-                        "path": str(file_path.relative_to(self.root_dir)),
+                        "path": relative_path,
                         "type": "react" if file_path.suffix in [".jsx", ".tsx"] else "vanilla"
                     })
 

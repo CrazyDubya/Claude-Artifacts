@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Card } from './components/ui/card'; // Assuming Card will be part of the base UI setup
+import { Card } from './components/ui/card';
 
 function App() {
   const [artifacts, setArtifacts] = useState([]);
   const [selectedArtifact, setSelectedArtifact] = useState(null);
+
+  // State for loaded content
   const [ArtifactComponent, setArtifactComponent] = useState(null);
+  const [htmlContent, setHtmlContent] = useState(null);
+  const [error, setError] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     const loadArtifacts = async () => {
@@ -26,23 +31,84 @@ function App() {
   }, []);
 
   useEffect(() => {
+    // Reset states when a new artifact is selected or deselected
+    setArtifactComponent(null);
+    setHtmlContent(null);
+    setError(null);
+    setIsLoading(false);
+
     if (selectedArtifact && selectedArtifact.path) {
-      const loadComponent = async () => {
-        try {
-            // Corrected import path
+      setIsLoading(true);
+
+      if (selectedArtifact.type === 'react') {
+        const loadComponent = async () => {
+          try {
+            // Path from manifest is relative to src/, e.g., ../claude_artifacts/MyComponent.jsx
+            // Prepending ./ is good practice for dynamic imports.
             const componentModule = await import(`./${selectedArtifact.path}`);
-            setArtifactComponent(() => componentModule.default);
-        } catch (error) {
-            // Corrected error message
-            console.error(`Error loading artifact component from path: ./${selectedArtifact.path}`, error);
-            setArtifactComponent(() => () => <div>Error loading component. Check console.</div>);
-        }
-      };
-      loadComponent();
-    } else {
-      setArtifactComponent(null);
+            if (componentModule.default) {
+              setArtifactComponent(() => componentModule.default);
+            } else {
+              throw new Error("Artifact does not have a default export.");
+            }
+          } catch (e) {
+            console.error(`Error loading artifact component from path: ${selectedArtifact.path}`, e);
+            setError(`Error loading component: ${e.message}. Check the console for more details.`);
+          } finally {
+            setIsLoading(false);
+          }
+        };
+        loadComponent();
+      } else if (selectedArtifact.path.endsWith('.html')) {
+        const loadHtml = async () => {
+          try {
+            // Path is relative from src/, e.g., ../claude_artifacts/my.html
+            // Fetch resolves this relative to the page URL, which works with Vite dev server.
+            const response = await fetch(selectedArtifact.path);
+            if (!response.ok) {
+              throw new Error(`Failed to fetch artifact: ${response.statusText}`);
+            }
+            const text = await response.text();
+            setHtmlContent(text);
+          } catch (e) {
+            console.error(`Error loading HTML artifact from path: ${selectedArtifact.path}`, e);
+            setError(`Error loading artifact: ${e.message}. Check the console for more details.`);
+          } finally {
+            setIsLoading(false);
+          }
+        };
+        loadHtml();
+      } else {
+        setError(`Unsupported artifact type for path: ${selectedArtifact.path}`);
+        setIsLoading(false);
+      }
     }
   }, [selectedArtifact]);
+
+  const renderArtifactContent = () => {
+    if (isLoading) {
+      return <p className="text-center">Loading...</p>;
+    }
+    if (error) {
+      return <div className="p-4 text-red-600 bg-red-100 rounded-md">{error}</div>;
+    }
+    if (ArtifactComponent) {
+      return <ArtifactComponent />;
+    }
+    if (htmlContent) {
+      return (
+        <iframe
+          srcDoc={htmlContent}
+          // Sandboxing for security, but allow-scripts is needed for JS in artifacts
+          sandbox="allow-scripts allow-same-origin"
+          className="w-full h-[75vh] border-none"
+          title={selectedArtifact.name}
+        />
+      );
+    }
+    // This part is inside the modal, so it's a placeholder before content loads
+    return <p>Loading artifact content...</p>;
+  };
 
   return (
     <div className="container mx-auto p-4">
@@ -59,19 +125,20 @@ function App() {
         ))}
       </div>
       {selectedArtifact && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className="bg-white p-6 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto flex flex-col">
+            <div className="flex justify-between items-center mb-4 pb-4 border-b">
               <h2 className="text-2xl font-bold">{selectedArtifact.name}</h2>
               <button
-                className="text-gray-500 hover:text-gray-700 text-2xl"
+                className="text-gray-500 hover:text-gray-700 text-3xl font-light"
                 onClick={() => setSelectedArtifact(null)}
+                aria-label="Close"
               >
                 &times;
               </button>
             </div>
-            <div id="artifact-component-container">
-              {ArtifactComponent ? <ArtifactComponent /> : <p>Loading component...</p>}
+            <div id="artifact-component-container" className="flex-grow">
+              {renderArtifactContent()}
             </div>
           </div>
         </div>

@@ -13,6 +13,9 @@ def main():
 def init(project_directory):
     """Initializes a new Claude artifact project in PROJECT_DIRECTORY."""
     project_path = Path(project_directory)
+    # Ensure the project directory exists before proceeding.
+    project_path.mkdir(parents=True, exist_ok=True)
+
     click.echo(f"Initializing project in {project_path}...")
     try:
         manager = ArtifactManager(project_path)

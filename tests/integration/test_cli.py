@@ -83,7 +83,7 @@ class TestCliIntegration:
              (project_path / "package.json").write_text(json.dumps({"name": project_name, "version": "0.1.0", "scripts": {}, "dependencies":{}}))
 
 
-        dummy_artifact_content = "import React from 'react'; import 'new-dep-for-add'; export default () => <div>Dummy</div>;"
+        dummy_artifact_content = "import React from 'react'; import Something from 'new-dep-for-add'; export default () => <div>Dummy</div>;"
         artifact_file = temp_project_dir / "dummy_artifact.jsx"
         artifact_file.write_text(dummy_artifact_content)
 
@@ -136,7 +136,7 @@ class TestCliIntegration:
 
         artifacts_dir = project_path / "claude_artifacts"
         (artifacts_dir / "scan_art1.jsx").write_text("export default () => 'art1';")
-        (artifacts_dir / "scan_art2.jsx").write_text("import 'some-dep'; export default () => 'art2';")
+        (artifacts_dir / "scan_art2.jsx").write_text("import Something from 'some-dep'; export default () => 'art2';")
 
         # Ensure package.json exists as scan_artifacts -> update_dependencies needs it
         # The init mock should create this, but double check or create a default if needed for the scan part
@@ -170,11 +170,11 @@ class TestCliIntegration:
     def test_add_missing_artifact_file_fails(self, temp_project_dir):
         runner = CliRunner()
         project_path = temp_project_dir / "proj"
-        # No need to init project if artifact file check happens first
+        project_path.mkdir()
 
         result = runner.invoke(cli_main, ["add", "non_existent_artifact.jsx", "--project", str(project_path)])
         assert result.exit_code != 0
-        assert "Invalid value for '[ARTIFACT_FILE]': Path 'non_existent_artifact.jsx' does not exist." in result.output
+        assert "Invalid value for 'ARTIFACT_FILE': File 'non_existent_artifact.jsx' does not exist." in result.output
 
     def test_add_missing_project_option_fails(self, temp_project_dir):
         runner = CliRunner()
@@ -184,14 +184,4 @@ class TestCliIntegration:
         result = runner.invoke(cli_main, ["add", str(artifact_file)])
         assert result.exit_code != 0
         assert "Missing option '--project'" in result.output
-```
 
-The integration tests cover the main CLI commands (`init`, `add`, `scan`) and some basic error handling scenarios.
-Key aspects:
-- `CliRunner` is used to invoke CLI commands.
-- `temp_project_dir` fixture provides isolated environments.
-- `mock_subprocess_run` with `side_effect` is used to simulate `npm`/`npx` calls and their file system side effects (like creating `package.json` or `tailwind.config.js`) because these files are needed by subsequent operations within the same CLI command execution (e.g., `init` creates `package.json`, then modifies it). This is important for integration testing the CLI flow.
-- Assertions check exit codes, output messages, and file system changes (creation of files/directories, content of manifest).
-- Basic error conditions like missing arguments or files are tested.
-
-These tests provide good coverage of the CLI's integration points.
