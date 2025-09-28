@@ -80,7 +80,7 @@ class TestCliIntegration:
 
         # Ensure package.json exists after init for the 'add' command's scan part
         if not (project_path / "package.json").exists():
-             (project_path / "package.json").write_text(json.dumps({"name": project_name, "version": "0.1.0", "scripts": {}, "dependencies":{}}))
+            (project_path / "package.json").write_text(json.dumps({"name": project_name, "version": "0.1.0", "scripts": {}, "dependencies":{}}))
 
 
         dummy_artifact_content = "import React from 'react'; import Something from 'new-dep-for-add'; export default () => <div>Dummy</div>;"
