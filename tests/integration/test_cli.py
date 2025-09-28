@@ -1,7 +1,7 @@
 # tests/integration/test_cli.py
 import pytest
 import json
-import subprocess # Required for specing MagicMock for subprocess.CompletedProcess
+import subprocess # Required for specifying MagicMock for subprocess.CompletedProcess
 from pathlib import Path
 from click.testing import CliRunner
 from unittest.mock import MagicMock # For more complex side_effect configurations if needed
