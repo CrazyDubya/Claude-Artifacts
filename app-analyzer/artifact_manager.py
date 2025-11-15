@@ -204,16 +204,46 @@ export default App;
             print("No new dependencies needed.")
 
 
+from flask import Flask, jsonify, send_from_directory, request
+
+# Initialize Flask App
+app = Flask(__name__)
+
+# Get the absolute path to the app-analyzer directory
+current_dir = os.path.dirname(os.path.abspath(__file__))
+app_analyzer_dir = Path(current_dir)
+
+# Initialize the artifact manager
+manager = ArtifactManager(app_analyzer_dir)
+
+@app.route('/api/artifacts', methods=['GET'])
+def get_artifacts():
+    """API endpoint to get the list of artifacts."""
+    artifacts = manager.scan_artifacts()
+    return jsonify(artifacts)
+
+@app.route('/api/artifact-source')
+def artifact_source():
+    """API endpoint to get the source code of an artifact."""
+    artifact_path = request.args.get('path')
+    if not artifact_path:
+        return "Missing path parameter", 400
+
+    # Security: Ensure the path is relative and within the artifacts directory
+    safe_base_path = manager.artifacts_dir.resolve()
+    target_path = (manager.artifacts_dir / artifact_path).resolve()
+
+    if not target_path.is_file() or not target_path.is_relative_to(safe_base_path):
+        return "Invalid or unauthorized path", 403
+
+    return send_from_directory(manager.artifacts_dir, artifact_path, as_attachment=False)
+
+@app.route('/<path:path>')
+def serve_static(path):
+    # This is for serving the main app, not for the API
+    return send_from_directory(manager.root_dir, path)
+
 if __name__ == "__main__":
-    # Get the absolute path to the app-analyzer directory
-    # Security fix: Use relative path instead of hardcoded path
-    import os
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    app_analyzer_dir = Path(current_dir)
-
-    # Initialize and run the artifact manager
-    manager = ArtifactManager(app_analyzer_dir)
-
     # Setup the project
     print("Setting up project...")
     manager.setup_project()
@@ -225,3 +255,7 @@ if __name__ == "__main__":
     print(f"\nFound {len(artifacts)} artifacts:")
     for artifact in artifacts:
         print(f"- {artifact['name']} ({artifact['type']})")
+
+    # Run the Flask app
+    print("\nStarting Flask server...")
+    app.run(port=5001, debug=True)
